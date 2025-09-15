@@ -1,5 +1,6 @@
 #include <glad/glad.h>  // MUST be included before GLFW!
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
 #include <iostream>
 
 // Simple vertex shader source

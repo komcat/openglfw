@@ -23,6 +23,10 @@ set(GLAD_DIR "${CMAKE_SOURCE_DIR}/external/glad")
 set(GLAD_INCLUDE_DIR "${GLAD_DIR}/include")
 set(GLAD_SOURCE "${GLAD_DIR}/src/glad.c")
 
+# Add GLM
+set(GLM_DIR "${CMAKE_SOURCE_DIR}/external/glm")
+set(GLM_INCLUDE_DIR "${GLM_DIR}")
+
 # Find OpenGL
 find_package(OpenGL REQUIRED)
 
@@ -34,6 +38,7 @@ target_include_directories(glad PUBLIC ${GLAD_INCLUDE_DIR})
 set(COMMON_INCLUDES 
     ${GLFW_INCLUDE_DIR}
     ${GLAD_INCLUDE_DIR}
+    ${GLM_INCLUDE_DIR}
     ${OPENGL_INCLUDE_DIRS}
 )
 
