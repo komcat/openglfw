@@ -61,7 +61,7 @@ add_executable(openglfw
 
 
 
- "src/BlackholeApp.cpp" "src/LightRay.h" "src/LightRay.cpp")
+ "src/BlackholeApp.cpp" "src/LightRay.h" "src/LightRay.cpp" "src/LightFieldGrid.h" "src/LightFieldGrid.cpp")
 target_include_directories(openglfw PRIVATE ${COMMON_INCLUDES})
 target_link_libraries(openglfw ${COMMON_LIBS})
 

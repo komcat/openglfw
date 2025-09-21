@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include "LightRay.h"
+#include "LightFieldGrid.h"
 
 class BlackholeApp {
 public:
@@ -44,6 +45,7 @@ private:
   // OpenGL handles
   GLFWwindow* window;
   unsigned int shaderProgram;
+  unsigned int gridShaderProgram;  // New shader for grid rendering
   unsigned int lineVAO, lineVBO;
 
   // Black hole parameters - ALWAYS CENTERED
@@ -55,13 +57,19 @@ private:
   static const int NUM_RAYS = 2000;  // 2000 rays for dense field
   std::vector<std::unique_ptr<LightRay>> rays;
 
+  // Light field grid for density visualization
+  std::unique_ptr<LightFieldGrid> lightField;
+
   // Animation
   float time;
   float raySpeed;               // Speed of light (adjustable)
+  float zoomLevel;              // Zoom level for camera
 
   // Shader sources
   static const char* vertexShaderSource;
   static const char* fragmentShaderSource;
+  static const char* gridVertexShaderSource;
+  static const char* gridFragmentShaderSource;
 
   // Helper methods
   bool InitWindow();
@@ -72,6 +80,7 @@ private:
   void UpdateRaySpeed(float newSpeed);
   void DrawBlackhole();
   void DrawRays();
+  void UpdateLightField();
   unsigned int CompileShader(unsigned int type, const char* source);
   unsigned int CreateShaderProgram(const char* vertSource, const char* fragSource);
 };

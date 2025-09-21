@@ -1,5 +1,6 @@
 ﻿#include "BlackholeApp.h"
 #include "LightRay.h"
+#include "LightFieldGrid.h"
 #include <iostream>
 #include <cmath>
 #include <random>
@@ -36,18 +37,47 @@ void main() {
 }
 )";
 
+// Grid vertex shader - positions and colors
+const char* BlackholeApp::gridVertexShaderSource = R"(
+#version 330 core
+layout (location = 0) in vec2 aPos;
+layout (location = 1) in vec3 aColor;
+
+uniform mat4 u_Projection;
+
+out vec3 vertexColor;
+
+void main() {
+    gl_Position = u_Projection * vec4(aPos, 0.0, 1.0);
+    vertexColor = aColor;
+}
+)";
+
+// Grid fragment shader - uses vertex colors
+const char* BlackholeApp::gridFragmentShaderSource = R"(
+#version 330 core
+in vec3 vertexColor;
+out vec4 FragColor;
+
+void main() {
+    FragColor = vec4(vertexColor, 1.0);
+}
+)";
+
 BlackholeApp::BlackholeApp(int width, int height)
   : windowWidth(width)
   , windowHeight(height)
   , window(nullptr)
   , shaderProgram(0)
+  , gridShaderProgram(0)
   , lineVAO(0)
   , lineVBO(0)
   , blackholePos(0.0f, 0.0f)  // ALWAYS centered at origin
   , blackholeRadius(0.288f)    // Your preferred radius
   , blackholeMass(0.22f)       // Your preferred mass
   , time(0.0f)
-  , raySpeed(0.84f) {          // Your preferred speed (0.839999 rounded)
+  , raySpeed(0.795f)           // Updated default speed
+  , zoomLevel(1.0f) {          // Default zoom level
   g_App = this;  // Set global pointer for callback
 }
 
@@ -55,6 +85,7 @@ BlackholeApp::~BlackholeApp() {
   if (lineVAO) glDeleteVertexArrays(1, &lineVAO);
   if (lineVBO) glDeleteBuffers(1, &lineVBO);
   if (shaderProgram) glDeleteProgram(shaderProgram);
+  if (gridShaderProgram) glDeleteProgram(gridShaderProgram);
   if (window) {
     glfwDestroyWindow(window);
     glfwTerminate();
@@ -73,18 +104,29 @@ void BlackholeApp::FramebufferSizeCallback(GLFWwindow* window, int width, int he
 
 // Update projection matrix
 void BlackholeApp::UpdateProjectionMatrix() {
+  // Update for regular shader
   glUseProgram(shaderProgram);
   float aspectRatio = (float)windowWidth / (float)windowHeight;
   glm::mat4 projection;
 
+  // Apply zoom by dividing the view bounds by zoom level
+  float viewSize = 1.0f / zoomLevel;
+
   if (aspectRatio > 1.0f) {
-    projection = glm::ortho(-aspectRatio, aspectRatio, -1.0f, 1.0f);
+    projection = glm::ortho(-aspectRatio * viewSize, aspectRatio * viewSize,
+      -viewSize, viewSize);
   }
   else {
-    projection = glm::ortho(-1.0f, 1.0f, -1.0f / aspectRatio, 1.0f / aspectRatio);
+    projection = glm::ortho(-viewSize, viewSize,
+      -viewSize / aspectRatio, viewSize / aspectRatio);
   }
 
   glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "u_Projection"),
+    1, GL_FALSE, glm::value_ptr(projection));
+
+  // Also update for grid shader
+  glUseProgram(gridShaderProgram);
+  glUniformMatrix4fv(glGetUniformLocation(gridShaderProgram, "u_Projection"),
     1, GL_FALSE, glm::value_ptr(projection));
 }
 
@@ -104,6 +146,13 @@ bool BlackholeApp::Initialize() {
 
   if (!InitGeometry()) {
     std::cerr << "Failed to initialize geometry" << std::endl;
+    return false;
+  }
+
+  // Initialize light field grid
+  lightField = std::make_unique<LightFieldGrid>();
+  if (!lightField->Initialize()) {
+    std::cerr << "Failed to initialize light field grid" << std::endl;
     return false;
   }
 
@@ -135,7 +184,7 @@ bool BlackholeApp::InitWindow() {
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
   window = glfwCreateWindow(windowWidth, windowHeight,
-    "Black Hole Radial Light Ray Simulation", NULL, NULL);
+    "Black Hole Light Field Simulation", NULL, NULL);
   if (!window) {
     std::cerr << "Failed to create GLFW window" << std::endl;
     glfwTerminate();
@@ -157,19 +206,22 @@ bool BlackholeApp::InitWindow() {
 
 bool BlackholeApp::InitShaders() {
   shaderProgram = CreateShaderProgram(vertexShaderSource, fragmentShaderSource);
-  return shaderProgram != 0;
+  if (shaderProgram == 0) return false;
+
+  gridShaderProgram = CreateShaderProgram(gridVertexShaderSource, gridFragmentShaderSource);
+  return gridShaderProgram != 0;
 }
 
 bool BlackholeApp::InitGeometry() {
-  // Create VAO and VBO for line drawing
+  // Create VAO and VBO for line/circle drawing
   glGenVertexArrays(1, &lineVAO);
   glGenBuffers(1, &lineVBO);
 
   glBindVertexArray(lineVAO);
   glBindBuffer(GL_ARRAY_BUFFER, lineVBO);
 
-  // Pre-allocate larger buffer for many rays
-  glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 20000 * 2, nullptr, GL_DYNAMIC_DRAW);
+  // Pre-allocate buffer for circle drawing
+  glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 1000 * 2, nullptr, GL_DYNAMIC_DRAW);
 
   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
   glEnableVertexAttribArray(0);
@@ -180,7 +232,7 @@ bool BlackholeApp::InitGeometry() {
   return true;
 }
 
-// InitRays() for parallel beams from 4 directions
+// InitRays() for parallel beams from 4 directions with more randomization
 void BlackholeApp::InitRays() {
   rays.clear();
 
@@ -188,70 +240,76 @@ void BlackholeApp::InitRays() {
   std::random_device rd;
   std::mt19937 gen(rd());
 
-  // Distributions for position and angle noise
-  std::uniform_real_distribution<float> posNoise(-0.02f, 0.02f);     // Small position variation
-  std::uniform_real_distribution<float> angleNoise(-0.01f, 0.01f);   // Very small angle variation
-  std::uniform_real_distribution<float> speedNoise(0.9f, 1.1f);      // Speed variation
+  // Increased noise ranges for more variation
+  std::uniform_real_distribution<float> posNoise(-0.1f, 0.1f);      // Larger position variation
+  std::uniform_real_distribution<float> angleNoise(-0.05f, 0.05f);  // Larger angle variation
+  std::uniform_real_distribution<float> speedNoise(0.8f, 1.2f);     // Wider speed variation
+  std::uniform_real_distribution<float> offsetNoise(-0.05f, 0.05f); // Additional perpendicular offset
 
   int raysPerDirection = NUM_RAYS / 4;  // Divide rays among 4 directions
 
   // 1. LEFT TO RIGHT rays
   for (int i = 0; i < raysPerDirection; i++) {
     float spacing = 4.0f / raysPerDirection;
-    float y = -2.0f + spacing * i + posNoise(gen);
-    float x = -2.0f;  // Start from left edge
+    float baseY = -2.0f + spacing * i;
+    float y = baseY + posNoise(gen);
+    float x = -2.0f + offsetNoise(gen);  // Add slight offset from edge
 
     rays.push_back(std::make_unique<LightRay>(
-      glm::vec2(x, y),              // Starting position
-      raySpeed * speedNoise(gen),   // Speed
-      500,                          // Segment count
-      0.0f + angleNoise(gen)        // Angle: 0 = straight right
+      glm::vec2(x, y),                      // Starting position with noise
+      raySpeed * speedNoise(gen),           // Speed with variation
+      500,                                   // Segment count
+      0.0f + angleNoise(gen)                // Angle: 0 = straight right, with noise
     ));
   }
 
   // 2. RIGHT TO LEFT rays
   for (int i = 0; i < raysPerDirection; i++) {
     float spacing = 4.0f / raysPerDirection;
-    float y = -2.0f + spacing * i + posNoise(gen);
-    float x = 2.0f;  // Start from right edge
+    float baseY = -2.0f + spacing * i;
+    float y = baseY + posNoise(gen);
+    float x = 2.0f + offsetNoise(gen);  // Add slight offset from edge
 
     rays.push_back(std::make_unique<LightRay>(
-      glm::vec2(x, y),              // Starting position
-      raySpeed * speedNoise(gen),   // Speed
-      500,                          // Segment count
-      M_PI + angleNoise(gen)        // Angle: π = straight left
+      glm::vec2(x, y),                      // Starting position with noise
+      raySpeed * speedNoise(gen),           // Speed with variation
+      500,                                   // Segment count
+      M_PI + angleNoise(gen)                // Angle: π = straight left, with noise
     ));
   }
 
   // 3. TOP TO BOTTOM rays
   for (int i = 0; i < raysPerDirection; i++) {
     float spacing = 4.0f / raysPerDirection;
-    float x = -2.0f + spacing * i + posNoise(gen);
-    float y = 2.0f;  // Start from top edge
+    float baseX = -2.0f + spacing * i;
+    float x = baseX + posNoise(gen);
+    float y = 2.0f + offsetNoise(gen);  // Add slight offset from edge
 
     rays.push_back(std::make_unique<LightRay>(
-      glm::vec2(x, y),                    // Starting position
-      raySpeed * speedNoise(gen),         // Speed
-      500,                                // Segment count
-      -M_PI / 2.0f + angleNoise(gen)       // Angle: -π/2 = straight down
+      glm::vec2(x, y),                       // Starting position with noise
+      raySpeed * speedNoise(gen),            // Speed with variation
+      500,                                    // Segment count
+      -M_PI / 2.0f + angleNoise(gen)        // Angle: -π/2 = straight down, with noise
     ));
   }
 
   // 4. BOTTOM TO TOP rays
   for (int i = 0; i < raysPerDirection; i++) {
     float spacing = 4.0f / raysPerDirection;
-    float x = -2.0f + spacing * i + posNoise(gen);
-    float y = -2.0f;  // Start from bottom edge
+    float baseX = -2.0f + spacing * i;
+    float x = baseX + posNoise(gen);
+    float y = -2.0f + offsetNoise(gen);  // Add slight offset from edge
 
     rays.push_back(std::make_unique<LightRay>(
-      glm::vec2(x, y),                   // Starting position
-      raySpeed * speedNoise(gen),        // Speed
-      500,                               // Segment count
-      M_PI / 2.0f + angleNoise(gen)        // Angle: π/2 = straight up
+      glm::vec2(x, y),                      // Starting position with noise
+      raySpeed * speedNoise(gen),           // Speed with variation
+      500,                                   // Segment count
+      M_PI / 2.0f + angleNoise(gen)         // Angle: π/2 = straight up, with noise
     ));
   }
 
-  std::cout << "Initialized " << NUM_RAYS << " rays in 4-directional grid pattern" << std::endl;
+  std::cout << "Initialized " << NUM_RAYS << " rays with enhanced randomization" << std::endl;
+  std::cout << "Light field density visualization enabled" << std::endl;
 }
 
 void BlackholeApp::DrawBlackhole() {
@@ -279,17 +337,18 @@ void BlackholeApp::DrawBlackhole() {
   // Draw filled black circle (fully opaque)
   glUniform4f(glGetUniformLocation(shaderProgram, "u_Color"), 0.0f, 0.0f, 0.0f, 1.0f);
   glDrawArrays(GL_TRIANGLE_FAN, 0, segments + 2);
-
-  // REMOVED: Event horizon red ring
 }
 
 void BlackholeApp::DrawRays() {
-  glUseProgram(shaderProgram);
-  glBindVertexArray(lineVAO);
-  glBindBuffer(GL_ARRAY_BUFFER, lineVBO);
+  // In density field mode, we don't draw rays directly
+  // Instead, we accumulate their paths in the light field grid
+  // This method is kept empty but could be used for debug visualization
+}
 
+void BlackholeApp::UpdateLightField() {
+  // Accumulate ray segments into the light field grid
   for (const auto& ray : rays) {
-    // Skip drawing absorbed rays - they disappear
+    // Skip absorbed rays
     if (ray->IsAbsorbed()) {
       continue;
     }
@@ -297,20 +356,13 @@ void BlackholeApp::DrawRays() {
     const auto& segments = ray->GetSegments();
     if (segments.size() < 2) continue;
 
-    std::vector<float> lineVertices;
-    for (const auto& segment : segments) {
-      lineVertices.push_back(segment.x);
-      lineVertices.push_back(segment.y);
+    // Accumulate each segment of the ray into the grid
+    // Use smaller intensity per ray since we have many
+    float intensity = 0.02f; // Small contribution per ray
+
+    for (size_t i = 0; i < segments.size() - 1; i++) {
+      lightField->AccumulateRaySegment(segments[i], segments[i + 1], intensity);
     }
-
-    // Light gray with 2% opacity (0.02 alpha) for all visible rays
-    glUniform4f(glGetUniformLocation(shaderProgram, "u_Color"), 0.8f, 0.8f, 0.8f, 0.1f);
-
-    glBufferSubData(GL_ARRAY_BUFFER, 0,
-      lineVertices.size() * sizeof(float), lineVertices.data());
-
-    glLineWidth(1.0f);  // Thinner lines for 2000 rays
-    glDrawArrays(GL_LINE_STRIP, 0, lineVertices.size() / 2);
   }
 }
 
@@ -326,8 +378,6 @@ void BlackholeApp::ProcessInput(GLFWwindow* window) {
   if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS) {
     glfwSetWindowShouldClose(window, true);
   }
-
-  // NO ARROW KEY MOVEMENT - Black hole always centered
 
   // Adjust mass with Q/E keys
   if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
@@ -399,10 +449,44 @@ void BlackholeApp::ProcessInput(GLFWwindow* window) {
     std::cout << "Light speed increased to: " << raySpeed << std::endl;
   }
 
+  // Adjust grid decay rate with N/M keys
+  if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS) {
+    float currentDecay = lightField->GetDecayRate();
+    lightField->SetDecayRate(std::max(0.1f, currentDecay - 0.002f));
+    std::cout << "Grid decay rate decreased to: " << lightField->GetDecayRate() << std::endl;
+  }
+  if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS) {
+    float currentDecay = lightField->GetDecayRate();
+    lightField->SetDecayRate(std::min(0.999f, currentDecay + 0.002f));
+    std::cout << "Grid decay rate increased to: " << lightField->GetDecayRate() << std::endl;
+  }
+
+  // Adjust zoom level with +/- keys
+  if (glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS ||
+    glfwGetKey(window, GLFW_KEY_KP_ADD) == GLFW_PRESS) {
+    zoomLevel = std::min(5.0f, zoomLevel + 0.02f);
+    UpdateProjectionMatrix();
+    std::cout << "Zoom in: " << zoomLevel << "x" << std::endl;
+  }
+  if (glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS ||
+    glfwGetKey(window, GLFW_KEY_KP_SUBTRACT) == GLFW_PRESS) {
+    zoomLevel = std::max(0.5f, zoomLevel - 0.02f);
+    UpdateProjectionMatrix();
+    std::cout << "Zoom out: " << zoomLevel << "x" << std::endl;
+  }
+
+  // Reset zoom with 0 key
+  if (glfwGetKey(window, GLFW_KEY_0) == GLFW_PRESS) {
+    zoomLevel = 1.0f;
+    UpdateProjectionMatrix();
+    std::cout << "Zoom reset to 1.0x" << std::endl;
+  }
+
   // Reset with R key or SPACE bar
   if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS ||
     glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
     InitRays();
+    lightField->Clear();
     std::cout << "Simulation reset (keeping current parameters)" << std::endl;
   }
 
@@ -420,6 +504,8 @@ void BlackholeApp::ProcessInput(GLFWwindow* window) {
     std::cout << "Max force cap: " << LightRay::GetMaxForce() << std::endl;
     std::cout << "Force exponent: " << LightRay::GetForceExponent() << std::endl;
     std::cout << "Number of rays: " << NUM_RAYS << std::endl;
+    std::cout << "Grid decay rate: " << lightField->GetDecayRate() << std::endl;
+    std::cout << "Zoom level: " << zoomLevel << "x" << std::endl;
     std::cout << "Respawn time: " << "0.1 seconds" << std::endl;
     std::cout << "=========================" << std::endl;
   }
@@ -437,14 +523,18 @@ void BlackholeApp::Update(float deltaTime) {
     // Update the ray
     ray->Update(deltaTime, blackholePos, blackholeMass, blackholeRadius);
   }
+
+  // Update the light field grid
+  UpdateLightField();
+  lightField->Update(deltaTime);
 }
 
 void BlackholeApp::Render() {
   glClearColor(0.05f, 0.05f, 0.1f, 1.0f);  // Dark blue background
   glClear(GL_COLOR_BUFFER_BIT);
 
-  // Draw rays first (so they appear behind the black hole)
-  DrawRays();
+  // Render the light field grid (density visualization)
+  lightField->Render(gridShaderProgram);
 
   // Draw black hole on top
   DrawBlackhole();
