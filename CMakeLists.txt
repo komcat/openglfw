@@ -55,7 +55,13 @@ set(COMMON_LIBS
 )
 
 # Add main executable
-add_executable(openglfw "src/main.cpp")
+add_executable(openglfw 
+"src/main.cpp" 
+"src/BlackholeApp.h"
+
+
+
+ "src/BlackholeApp.cpp" "src/LightRay.h" "src/LightRay.cpp")
 target_include_directories(openglfw PRIVATE ${COMMON_INCLUDES})
 target_link_libraries(openglfw ${COMMON_LIBS})
 
