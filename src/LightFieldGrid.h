@@ -36,6 +36,10 @@ public:
   void SetMaxBrightness(float max) { maxBrightness = max; }
   float GetMaxBrightness() const { return maxBrightness; }
 
+  // Get/Set display threshold
+  void SetDisplayThreshold(float threshold) { displayThreshold = threshold; }
+  float GetDisplayThreshold() const { return displayThreshold; }
+
 private:
   // Grid data - stores accumulated light intensity
   std::vector<std::vector<float>> grid;
@@ -48,6 +52,7 @@ private:
   // Parameters
   float decayRate;        // How fast cells fade (0.98 = slow fade)
   float maxBrightness;    // Maximum brightness cap
+  float displayThreshold; // Minimum intensity to display
   float worldSize;        // Size of world space (-2 to 2)
 
   // Helper methods

@@ -242,9 +242,9 @@ void BlackholeApp::InitRays() {
 
   // Increased noise ranges for more variation
   std::uniform_real_distribution<float> posNoise(-0.1f, 0.1f);      // Larger position variation
-  std::uniform_real_distribution<float> angleNoise(-0.05f, 0.05f);  // Larger angle variation
+  std::uniform_real_distribution<float> angleNoise(-0.1f, 0.1f);  // Larger angle variation
   std::uniform_real_distribution<float> speedNoise(0.8f, 1.2f);     // Wider speed variation
-  std::uniform_real_distribution<float> offsetNoise(-0.05f, 0.05f); // Additional perpendicular offset
+  std::uniform_real_distribution<float> offsetNoise(-0.1f, 0.1f); // Additional perpendicular offset
 
   int raysPerDirection = NUM_RAYS / 4;  // Divide rays among 4 directions
 
@@ -358,7 +358,7 @@ void BlackholeApp::UpdateLightField() {
 
     // Accumulate each segment of the ray into the grid
     // Use smaller intensity per ray since we have many
-    float intensity = 0.02f; // Small contribution per ray
+    float intensity = 0.05f; // Small contribution per ray
 
     for (size_t i = 0; i < segments.size() - 1; i++) {
       lightField->AccumulateRaySegment(segments[i], segments[i + 1], intensity);
@@ -482,6 +482,18 @@ void BlackholeApp::ProcessInput(GLFWwindow* window) {
     std::cout << "Zoom reset to 1.0x" << std::endl;
   }
 
+  // Adjust display threshold with J/K keys
+  if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
+    float currentThreshold = lightField->GetDisplayThreshold();
+    lightField->SetDisplayThreshold(std::max(0.0f, currentThreshold - 0.005f));
+    std::cout << "Display threshold decreased to: " << lightField->GetDisplayThreshold() << std::endl;
+  }
+  if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
+    float currentThreshold = lightField->GetDisplayThreshold();
+    lightField->SetDisplayThreshold(std::min(0.5f, currentThreshold + 0.005f));
+    std::cout << "Display threshold increased to: " << lightField->GetDisplayThreshold() << std::endl;
+  }
+
   // Reset with R key or SPACE bar
   if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS ||
     glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) {
@@ -505,6 +517,7 @@ void BlackholeApp::ProcessInput(GLFWwindow* window) {
     std::cout << "Force exponent: " << LightRay::GetForceExponent() << std::endl;
     std::cout << "Number of rays: " << NUM_RAYS << std::endl;
     std::cout << "Grid decay rate: " << lightField->GetDecayRate() << std::endl;
+    std::cout << "Display threshold: " << lightField->GetDisplayThreshold() << std::endl;
     std::cout << "Zoom level: " << zoomLevel << "x" << std::endl;
     std::cout << "Respawn time: " << "0.1 seconds" << std::endl;
     std::cout << "=========================" << std::endl;

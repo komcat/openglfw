@@ -6,6 +6,7 @@
 LightFieldGrid::LightFieldGrid()
   : decayRate(0.985f)      // Slow fade for trail effect
   , maxBrightness(5.0f)    // Cap brightness to prevent oversaturation
+  , displayThreshold(0.30f) // Don't display cells below 5% intensity
   , worldSize(4.0f)        // World spans from -2 to 2
   , VAO(0)
   , VBO(0)
@@ -192,14 +193,15 @@ void LightFieldGrid::Update(float deltaTime) {
 }
 
 glm::vec3 LightFieldGrid::IntensityToColor(float intensity) const {
-  // Map intensity to color gradient
-  // 0 -> black
-  // low -> dark blue
-  // medium -> cyan
-  // high -> white
+  // Apply threshold - return black for intensities below threshold
+  if (intensity < displayThreshold) {
+    return glm::vec3(0.0f, 0.0f, 0.0f);
+  }
 
-  float normalized = intensity / maxBrightness;
-  normalized = std::min(1.0f, normalized);
+  // Map intensity to color gradient
+  // Remap intensity from (threshold, maxBrightness) to (0, 1)
+  float normalized = (intensity - displayThreshold) / (maxBrightness - displayThreshold);
+  normalized = std::max(0.0f, std::min(1.0f, normalized));
 
   glm::vec3 color;
 

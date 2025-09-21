@@ -54,7 +54,7 @@ private:
   float blackholeMass;          // Mass (affects gravity strength)
 
   // Light rays
-  static const int NUM_RAYS = 2000;  // 2000 rays for dense field
+  static const int NUM_RAYS = 300;  // 2000 rays for dense field
   std::vector<std::unique_ptr<LightRay>> rays;
 
   // Light field grid for density visualization
