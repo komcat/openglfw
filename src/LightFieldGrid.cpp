@@ -6,7 +6,7 @@
 LightFieldGrid::LightFieldGrid()
   : decayRate(0.985f)      // Slow fade for trail effect
   , maxBrightness(5.0f)    // Cap brightness to prevent oversaturation
-  , displayThreshold(0.30f) // Don't display cells below 5% intensity
+  , displayThreshold(0.05f) // Don't display cells below 5% intensity
   , worldSize(4.0f)        // World spans from -2 to 2
   , VAO(0)
   , VBO(0)

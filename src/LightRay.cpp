@@ -87,6 +87,13 @@ glm::vec2 LightRay::CalculateGravitationalForce(glm::vec2 position, glm::vec2 bl
   // Gravitational force with configurable falloff exponent
   float forceMagnitude = blackholeMass * gravityMultiplier / pow(distance, forceExponent);
 
+  // Add orbital boost zone - helps create stable orbits
+  // Sweet spot at around 2-3x the event horizon radius
+  float optimalOrbitRadius = 0.6f;  // Tune this for orbital distance
+  if (distance > optimalOrbitRadius * 0.7f && distance < optimalOrbitRadius * 1.3f) {
+    forceMagnitude *= 1.2f;  // Boost force in orbital zone to help capture rays
+  }
+
   // Apply configurable force cap
   forceMagnitude = std::min(forceMagnitude, maxForce);
 

@@ -356,15 +356,16 @@ void BlackholeApp::UpdateLightField() {
     const auto& segments = ray->GetSegments();
     if (segments.size() < 2) continue;
 
-    // Accumulate each segment of the ray into the grid
-    // Use smaller intensity per ray since we have many
-    float intensity = 0.05f; // Small contribution per ray
+    // Only accumulate the most recent segment (the ray head movement this frame)
+    // This represents where the photon traveled during this frame
+    float intensity = 0.1f; // Higher intensity since we're only counting one segment
 
-    for (size_t i = 0; i < segments.size() - 1; i++) {
-      lightField->AccumulateRaySegment(segments[i], segments[i + 1], intensity);
-    }
+    // Get the head segment (most recent movement)
+    size_t headIndex = 0; // Head is at the front of the segments vector
+    lightField->AccumulateRaySegment(segments[headIndex], segments[headIndex + 1], intensity);
   }
 }
+
 
 void BlackholeApp::UpdateRaySpeed(float newSpeed) {
   raySpeed = newSpeed;
@@ -529,15 +530,22 @@ void BlackholeApp::ProcessInput(GLFWwindow* window) {
 void BlackholeApp::Update(float deltaTime) {
   time += deltaTime;
 
-  // Update all rays
-  for (int i = 0; i < rays.size(); i++) {
-    auto& ray = rays[i];
+  // Only update rays that are potentially visible
+  float cullRadius = 3.0f / zoomLevel;  // Adjust based on zoom
 
-    // Update the ray
+  for (auto& ray : rays) {
+    // Skip rays that are far from view
+    const auto& segments = ray->GetSegments();
+    if (!segments.empty()) {
+      float dist = glm::length(segments[0]);
+      if (dist > cullRadius && !ray->IsAbsorbed()) {
+        continue;  // Skip update for distant rays
+      }
+    }
+
     ray->Update(deltaTime, blackholePos, blackholeMass, blackholeRadius);
   }
 
-  // Update the light field grid
   UpdateLightField();
   lightField->Update(deltaTime);
 }
