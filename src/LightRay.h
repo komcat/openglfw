@@ -6,7 +6,7 @@
 class LightRay {
 public:
   // Constructor that takes a starting position instead of just Y
-  LightRay(glm::vec2 startPos, float speed = 0.3f, int segmentCount = 50, float angle = 0.0f);
+  LightRay(glm::vec2 startPos, float speed = 0.3f, int segmentCount = 10, float angle = 0.0f);
 
   // Reset the ray to starting position
   void Reset();

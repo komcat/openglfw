@@ -17,7 +17,7 @@ LightRay::LightRay(glm::vec2 startPos, float speed, int segmentCount, float angl
   , baseSpeed(speed)
   , initialAngle(angle)
   , absorbed(false)
-  , maxSegments(segmentCount * 10)
+  , maxSegments(segmentCount)
   , timeSinceAbsorption(0.0f) {
   Reset();
 }
@@ -46,7 +46,8 @@ void LightRay::Reset() {
   // Create initial trail extending backwards from start position
   float segmentLength = 0.02f;
 
-  for (int i = 0; i < 50; ++i) {
+  // Create shorter initial trail
+  for (int i = 0; i < 10; ++i) {  // Reduce from 50 to 10
     float x = headPosition.x - i * segmentLength * cos(finalAngle);
     float y = headPosition.y - i * segmentLength * sin(finalAngle);
     segments.push_back(glm::vec2(x, y));
@@ -94,31 +95,35 @@ glm::vec2 LightRay::CalculateGravitationalForce(glm::vec2 position, glm::vec2 bl
   return glm::normalize(toBlackhole) * forceMagnitude;
 }
 
-void LightRay::PropagateRay(float deltaTime, glm::vec2 blackholePos, float blackholeMass, float eventHorizon) {
-  // Only the ray HEAD is affected by gravity
-  // Existing segments (photons that already passed) remain fixed in space
 
+void LightRay::PropagateRay(float deltaTime, glm::vec2 blackholePos, float blackholeMass, float eventHorizon) {
   // If absorbed, update absorption timer but don't move the ray
   if (absorbed) {
     timeSinceAbsorption += deltaTime;
     return;
   }
 
-  // Calculate gravitational force on the ray head only
+  // Calculate gravitational force on the ray head
   glm::vec2 force = CalculateGravitationalForce(headPosition, blackholePos, blackholeMass);
 
-  // Update velocity of the head (F = ma, assume m = 1)
-  headVelocity += force * deltaTime;
+  // PHYSICALLY ACCURATE: Light speed is constant!
+  // Gravity only changes direction, not speed
 
-  // Maintain constant speed (speed of light is constant)
-  float currentSpeed = glm::length(headVelocity);
+  // Apply force as acceleration perpendicular to velocity (deflection only)
+  // This simulates gravitational lensing without changing speed
 
-  // Normalize to maintain constant speed
-  if (currentSpeed > 0.001f) {
-    headVelocity = glm::normalize(headVelocity) * baseSpeed;
-  }
+  // Get perpendicular component of force relative to velocity
+  glm::vec2 velNorm = glm::normalize(headVelocity);
+  float forceDotVel = glm::dot(force, velNorm);
+  glm::vec2 perpForce = force - velNorm * forceDotVel;
 
-  // Update head position
+  // Apply only the perpendicular force (this bends the path without changing speed)
+  headVelocity += perpForce * deltaTime;
+
+  // CRITICAL: Normalize to maintain constant speed of light
+  headVelocity = glm::normalize(headVelocity) * baseSpeed;
+
+  // Update position
   headPosition += headVelocity * deltaTime;
 
   // Check if ray head hit the event horizon
@@ -126,13 +131,13 @@ void LightRay::PropagateRay(float deltaTime, glm::vec2 blackholePos, float black
   if (distToBlackhole < eventHorizon) {
     absorbed = true;
     timeSinceAbsorption = 0.0f;
-    // Freeze the head at the event horizon edge
+    // Freeze at event horizon
     glm::vec2 toCenter = blackholePos - headPosition;
     headPosition = blackholePos - glm::normalize(toCenter) * eventHorizon;
-    // Slow down dramatically (time dilation effect)
-    headVelocity *= 0.1f;
   }
 }
+
+
 
 void LightRay::UpdateSegments(float deltaTime) {
   // Don't update segments if absorbed (ray is frozen at event horizon)

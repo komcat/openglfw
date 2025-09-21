@@ -180,78 +180,51 @@ bool BlackholeApp::InitGeometry() {
   return true;
 }
 
-// InitRays() for parallel beams from 4 directions
+
+// Replace InitRays() method:
 void BlackholeApp::InitRays() {
   rays.clear();
+  timeSinceLastSpawn = 0.0f;
+
+  // Start with an initial batch of rays
+  SpawnRayBatch();
+
+  std::cout << "Ray spawning initialized - Max rays: " << MAX_RAYS
+    << ", Spawn interval: " << spawnInterval << " seconds" << std::endl;
+}
+
+
+// Add new method to spawn a batch of rays:
+void BlackholeApp::SpawnRayBatch() {
+  // Don't spawn if we're at max capacity
+  if (rays.size() >= MAX_RAYS) {
+    return;
+  }
 
   // Random number generation for variations
   std::random_device rd;
   std::mt19937 gen(rd());
 
-  // Distributions for position and angle noise
-  std::uniform_real_distribution<float> posNoise(-0.02f, 0.02f);     // Small position variation
-  std::uniform_real_distribution<float> angleNoise(-0.01f, 0.01f);   // Very small angle variation
-  std::uniform_real_distribution<float> speedNoise(0.9f, 1.1f);      // Speed variation
+  std::uniform_real_distribution<float> posNoise(-0.02f, 0.02f);
+  std::uniform_real_distribution<float> angleNoise(-0.01f, 0.01f);
+  std::uniform_real_distribution<float> speedNoise(0.95f, 1.05f);
 
-  int raysPerDirection = NUM_RAYS / 4;  // Divide rays among 4 directions
+  // Calculate how many rays we can spawn
+  int raysToSpawn = std::min(RAYS_PER_SPAWN, MAX_RAYS - (int)rays.size());
 
-  // 1. LEFT TO RIGHT rays
-  for (int i = 0; i < raysPerDirection; i++) {
-    float spacing = 4.0f / raysPerDirection;
-    float y = -2.0f + spacing * i + posNoise(gen);
-    float x = -2.0f;  // Start from left edge
-
-    rays.push_back(std::make_unique<LightRay>(
-      glm::vec2(x, y),              // Starting position
-      raySpeed * speedNoise(gen),   // Speed
-      500,                          // Segment count
-      0.0f + angleNoise(gen)        // Angle: 0 = straight right
-    ));
-  }
-
-  // 2. RIGHT TO LEFT rays
-  for (int i = 0; i < raysPerDirection; i++) {
-    float spacing = 4.0f / raysPerDirection;
-    float y = -2.0f + spacing * i + posNoise(gen);
-    float x = 2.0f;  // Start from right edge
+  // Spawn rays distributed along the left edge
+  for (int i = 0; i < raysToSpawn; i++) {
+    float spacing = 4.0f / raysToSpawn;  // Use actual spawn count, not RAYS_PER_SPAWN
+    float y = -2.0f + spacing * i + spacing * 0.5f + posNoise(gen);  // Center in each slot
+    float x = -2.0f;  // Left edge
 
     rays.push_back(std::make_unique<LightRay>(
-      glm::vec2(x, y),              // Starting position
-      raySpeed * speedNoise(gen),   // Speed
-      500,                          // Segment count
-      M_PI + angleNoise(gen)        // Angle: π = straight left
+      glm::vec2(x, y),
+      raySpeed * speedNoise(gen),
+      10,  // Minimal segments since we only show heads
+      0.0f + angleNoise(gen)  // Straight right
     ));
   }
-
-  // 3. TOP TO BOTTOM rays
-  for (int i = 0; i < raysPerDirection; i++) {
-    float spacing = 4.0f / raysPerDirection;
-    float x = -2.0f + spacing * i + posNoise(gen);
-    float y = 2.0f;  // Start from top edge
-
-    rays.push_back(std::make_unique<LightRay>(
-      glm::vec2(x, y),                    // Starting position
-      raySpeed * speedNoise(gen),         // Speed
-      500,                                // Segment count
-      -M_PI / 2.0f + angleNoise(gen)       // Angle: -π/2 = straight down
-    ));
-  }
-
-  // 4. BOTTOM TO TOP rays
-  for (int i = 0; i < raysPerDirection; i++) {
-    float spacing = 4.0f / raysPerDirection;
-    float x = -2.0f + spacing * i + posNoise(gen);
-    float y = -2.0f;  // Start from bottom edge
-
-    rays.push_back(std::make_unique<LightRay>(
-      glm::vec2(x, y),                   // Starting position
-      raySpeed * speedNoise(gen),        // Speed
-      500,                               // Segment count
-      M_PI / 2.0f + angleNoise(gen)        // Angle: π/2 = straight up
-    ));
-  }
-
-  std::cout << "Initialized " << NUM_RAYS << " rays in 4-directional grid pattern" << std::endl;
 }
 
 void BlackholeApp::DrawBlackhole() {
@@ -299,35 +272,43 @@ void BlackholeApp::DrawBlackhole() {
   glDrawArrays(GL_LINE_LOOP, 0, segments + 1);
 }
 
+
+
+// Modified DrawRays() for better performance with many rays:
 void BlackholeApp::DrawRays() {
   glUseProgram(shaderProgram);
   glBindVertexArray(lineVAO);
   glBindBuffer(GL_ARRAY_BUFFER, lineVBO);
 
+  // Pre-allocate for performance
+  std::vector<float> pointVertices;
+  pointVertices.reserve(rays.size() * 2);
+
   for (const auto& ray : rays) {
-    // Skip drawing absorbed rays - they disappear
     if (ray->IsAbsorbed()) {
       continue;
     }
 
     const auto& segments = ray->GetSegments();
-    if (segments.size() < 2) continue;
+    if (segments.empty()) continue;
 
-    std::vector<float> lineVertices;
-    for (const auto& segment : segments) {
-      lineVertices.push_back(segment.x);
-      lineVertices.push_back(segment.y);
-    }
-
-    // Light gray with transparency for all visible rays
-    glUniform4f(glGetUniformLocation(shaderProgram, "u_Color"), 0.8f, 0.8f, 0.8f, 0.5f);
-
-    glBufferSubData(GL_ARRAY_BUFFER, 0,
-      lineVertices.size() * sizeof(float), lineVertices.data());
-
-    glLineWidth(1.0f);  // Thinner lines for 2000 rays
-    glDrawArrays(GL_LINE_STRIP, 0, lineVertices.size() / 2);
+    // Head position
+    pointVertices.push_back(segments[0].x);
+    pointVertices.push_back(segments[0].y);
   }
+
+  if (pointVertices.empty()) return;
+
+  glBufferSubData(GL_ARRAY_BUFFER, 0,
+    pointVertices.size() * sizeof(float), pointVertices.data());
+
+  // Bright cyan particles
+  glUniform4f(glGetUniformLocation(shaderProgram, "u_Color"), 0.8f, 1.0f, 1.0f, 0.9f);
+
+  glEnable(GL_POINT_SMOOTH);
+  glPointSize(2.0f);  // Smaller points for many particles
+  glDrawArrays(GL_POINTS, 0, pointVertices.size() / 2);
+  glPointSize(1.0f);
 }
 
 void BlackholeApp::UpdateRaySpeed(float newSpeed) {
@@ -355,6 +336,7 @@ void BlackholeApp::ProcessInput(GLFWwindow* window) {
     std::cout << "Black hole mass increased to: " << blackholeMass << std::endl;
   }
 
+
   // Gravity multiplier with D/F keys
   if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
     float currentMult = LightRay::GetGravityMultiplier();
@@ -379,6 +361,17 @@ void BlackholeApp::ProcessInput(GLFWwindow* window) {
     std::cout << "Max force cap increased to: " << LightRay::GetMaxForce() << std::endl;
   }
 
+  // Adjust spawn interval with +/- keys
+  if (glfwGetKey(window, GLFW_KEY_KP_ADD) == GLFW_PRESS ||
+    glfwGetKey(window, GLFW_KEY_EQUAL) == GLFW_PRESS) {
+    spawnInterval = std::max(0.05f, spawnInterval - 0.01f);
+    std::cout << "Spawn interval decreased to: " << spawnInterval << " seconds" << std::endl;
+  }
+  if (glfwGetKey(window, GLFW_KEY_KP_SUBTRACT) == GLFW_PRESS ||
+    glfwGetKey(window, GLFW_KEY_MINUS) == GLFW_PRESS) {
+    spawnInterval = std::min(2.0f, spawnInterval + 0.01f);
+    std::cout << "Spawn interval increased to: " << spawnInterval << " seconds" << std::endl;
+  }
   // Force exponent with G/H keys
   if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS) {
     float currentExp = LightRay::GetForceExponent();
@@ -443,15 +436,45 @@ void BlackholeApp::ProcessInput(GLFWwindow* window) {
   pKeyWasPressed = pKeyIsPressed;
 }
 
+
+// Modified Update() method:
 void BlackholeApp::Update(float deltaTime) {
   time += deltaTime;
+  timeSinceLastSpawn += deltaTime;
 
-  // Update all rays
-  for (int i = 0; i < rays.size(); i++) {
-    auto& ray = rays[i];
+  // Spawn new rays periodically
+  if (timeSinceLastSpawn >= spawnInterval) {
+    SpawnRayBatch();
+    timeSinceLastSpawn = 0.0f;
+  }
+
+  // Update all rays and remove those that need resetting
+  for (auto it = rays.begin(); it != rays.end(); ) {
+    auto& ray = *it;
 
     // Update the ray
     ray->Update(deltaTime, blackholePos, blackholeMass, blackholeRadius);
+
+    // Instead of resetting rays, remove them when they go off screen
+    // This allows continuous spawning without recycling
+    if (ray->NeedsReset() && !ray->IsAbsorbed()) {
+      it = rays.erase(it);
+    }
+    else if (ray->ShouldRespawn()) {
+      // Also remove absorbed rays after their timer expires
+      it = rays.erase(it);
+    }
+    else {
+      ++it;
+    }
+  }
+
+  // Optional: Print current ray count periodically for debugging
+  static float printTimer = 0.0f;
+  printTimer += deltaTime;
+  if (printTimer > 5.0f) {  // Print every 5 seconds
+    std::cout << "Active rays: " << rays.size() << "/" << MAX_RAYS << std::endl;
+    printTimer = 0.0f;
   }
 }
 
