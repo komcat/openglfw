@@ -33,6 +33,9 @@ public:
   // Get window handle
   GLFWwindow* GetWindow() const { return window; }
 
+  // Window resize callback
+  static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
+
 private:
   // Window dimensions
   int windowWidth;
@@ -43,13 +46,13 @@ private:
   unsigned int shaderProgram;
   unsigned int lineVAO, lineVBO;
 
-  // Black hole parameters
-  glm::vec2 blackholePos;      // Position in screen space [-1, 1]
+  // Black hole parameters - ALWAYS CENTERED
+  glm::vec2 blackholePos;      // Always (0, 0) in normalized coords
   float blackholeRadius;        // Visual radius of black hole (event horizon)
   float blackholeMass;          // Mass (affects gravity strength)
 
   // Light rays
-  static const int NUM_RAYS = 80;
+  static const int NUM_RAYS = 2000;  // 2000 rays for dense field
   std::vector<std::unique_ptr<LightRay>> rays;
 
   // Animation
@@ -65,6 +68,7 @@ private:
   bool InitShaders();
   bool InitGeometry();
   void InitRays();
+  void UpdateProjectionMatrix();
   void UpdateRaySpeed(float newSpeed);
   void DrawBlackhole();
   void DrawRays();

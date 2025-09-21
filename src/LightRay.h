@@ -2,12 +2,11 @@
 
 #include <glm/glm.hpp>
 #include <vector>
-#include <deque>
 
 class LightRay {
 public:
-  // Constructor with optional initial angle
-  LightRay(float startY, float speed = 0.3f, int segmentCount = 50, float angle = 0.0f);
+  // Constructor that takes a starting position instead of just Y
+  LightRay(glm::vec2 startPos, float speed = 0.3f, int segmentCount = 50, float angle = 0.0f);
 
   // Reset the ray to starting position
   void Reset();
@@ -21,8 +20,11 @@ public:
   // Check if ray is absorbed
   bool IsAbsorbed() const { return absorbed; }
 
-  // Check if ray needs reset (went off screen)
+  // Check if ray needs reset (went off screen or absorbed)
   bool NeedsReset() const;
+
+  // Check if ray should respawn (absorbed for too long)
+  bool ShouldRespawn() const;
 
   // Set/Get properties
   void SetSpeed(float s) { baseSpeed = s; }
@@ -41,13 +43,12 @@ public:
   static float GetMaxForce() { return maxForce; }
   static float GetForceExponent() { return forceExponent; }
 
-
 private:
   // Ray properties
-  float startY;           // Starting Y position (constant)
-  float baseSpeed;        // Base speed (speed of light)
-  float initialAngle;     // Initial launch angle
-  bool absorbed;          // Has the ray been absorbed?
+  glm::vec2 startPosition;    // Full starting position
+  float baseSpeed;             // Base speed (speed of light)
+  float initialAngle;          // Initial launch angle
+  bool absorbed;               // Has the ray been absorbed?
 
   // Ray segments (the continuous beam)
   std::vector<glm::vec2> segments;    // Current ray segments forming the beam
@@ -57,16 +58,18 @@ private:
   glm::vec2 headPosition;      // Current position of ray head
   glm::vec2 headVelocity;      // Current velocity of ray head
 
+  // Absorption tracking
+  float timeSinceAbsorption;   // Time since ray was absorbed
+  static const float ABSORPTION_RESPAWN_TIME; // Time before respawning absorbed ray
+
   // Helper methods
   glm::vec2 CalculateGravitationalForce(glm::vec2 position, glm::vec2 blackholePos, float blackholeMass);
   void UpdateSegments(float deltaTime);
   void PropagateRay(float deltaTime, glm::vec2 blackholePos, float blackholeMass, float eventHorizon);
 
   // Gravity tuning parameters
-  static float gravityMultiplier;     // Overall gravity strength multiplier
-  static float maxForce;               // Maximum gravitational force cap
-  static float forceExponent;          // Exponent for distance falloff (default 2 for 1/r²)
-  static float minDistance;            // Minimum distance to prevent singularities
-
-
+  static float gravityMultiplier;
+  static float maxForce;
+  static float forceExponent;
+  static float minDistance;
 };

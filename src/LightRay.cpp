@@ -2,54 +2,63 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <random>
 
+// Static member definitions
+float LightRay::gravityMultiplier = 1.0f;
+float LightRay::maxForce = 15.0f;
+float LightRay::forceExponent = 2.0f;
+float LightRay::minDistance = 0.001f;
+const float LightRay::ABSORPTION_RESPAWN_TIME = 0.1f; // Respawn after 0.1 seconds
 
-// Static member definitions with default values
-float LightRay::gravityMultiplier = 1.0f;    // Default: normal gravity
-float LightRay::maxForce = 15.0f;            // Default: cap at 15
-float LightRay::forceExponent = 2.0f;        // Default: 1/r² falloff
-float LightRay::minDistance = 0.001f;        // Default: very small minimum
-
-
-LightRay::LightRay(float startY, float speed, int segmentCount, float angle)
-  : startY(startY)
+// Constructor for radial rays
+LightRay::LightRay(glm::vec2 startPos, float speed, int segmentCount, float angle)
+  : startPosition(startPos)
   , baseSpeed(speed)
   , initialAngle(angle)
   , absorbed(false)
-  , maxSegments(segmentCount * 10) {  // Much longer rays (10x)
+  , maxSegments(segmentCount * 10)
+  , timeSinceAbsorption(0.0f) {
   Reset();
 }
 
-
+// Reset method for radial rays
 void LightRay::Reset() {
   absorbed = false;
+  timeSinceAbsorption = 0.0f;
   segments.clear();
 
-  // Initialize ray starting from left edge
-  headPosition = glm::vec2(-1.0f, startY);
+  // Add some randomization for variety
+  static std::random_device rd;
+  static std::mt19937 gen(rd());
+  static std::uniform_real_distribution<float> posNoise(-0.02f, 0.02f);
+  static std::uniform_real_distribution<float> angleNoise(-0.03f, 0.03f);
 
-  // Set initial velocity straight to the right
-  headVelocity = glm::vec2(baseSpeed, 0.0f);
+  // Initialize ray at starting position with slight noise
+  headPosition = startPosition + glm::vec2(posNoise(gen), posNoise(gen));
 
-  // Create initial trail extending off-screen to the left
-  // This represents the ray that was emitted before entering the screen
+  // Set initial velocity based on angle (with slight variation)
+  float finalAngle = initialAngle + angleNoise(gen);
+  float vx = baseSpeed * cos(finalAngle);
+  float vy = baseSpeed * sin(finalAngle);
+  headVelocity = glm::vec2(vx, vy);
+
+  // Create initial trail extending backwards from start position
   float segmentLength = 0.02f;
 
-  for (int i = 0; i < 50; ++i) {  // Shorter initial trail since we'll build it up
-    float x = headPosition.x - i * segmentLength;
-    float y = headPosition.y;  // Straight line initially
+  for (int i = 0; i < 50; ++i) {
+    float x = headPosition.x - i * segmentLength * cos(finalAngle);
+    float y = headPosition.y - i * segmentLength * sin(finalAngle);
     segments.push_back(glm::vec2(x, y));
   }
 }
 
-
 bool LightRay::IsOrbiting() const {
   // Check if ray is in a roughly circular path
-  // This happens when velocity is mostly perpendicular to position vector
   if (segments.size() < 10) return false;
 
-  // Check if recent positions form a curve
-  glm::vec2 center = glm::vec2(0.5f, 0.0f); // Approximate black hole position
+  // Check if recent positions form a curve around origin (0,0)
+  glm::vec2 center = glm::vec2(0.0f, 0.0f); // Black hole at origin
   float avgRadius = 0;
   for (size_t i = 0; i < std::min(size_t(10), segments.size()); ++i) {
     avgRadius += glm::length(segments[i] - center);
@@ -67,7 +76,6 @@ bool LightRay::IsOrbiting() const {
   return variance < 0.01f && avgRadius < 0.5f;  // Small variance and close to black hole
 }
 
-
 glm::vec2 LightRay::CalculateGravitationalForce(glm::vec2 position, glm::vec2 blackholePos, float blackholeMass) {
   // Calculate vector from position to black hole
   glm::vec2 toBlackhole = blackholePos - position;
@@ -77,25 +85,10 @@ glm::vec2 LightRay::CalculateGravitationalForce(glm::vec2 position, glm::vec2 bl
   if (distance < minDistance) distance = minDistance;
 
   // Gravitational force with configurable falloff exponent
-  // F = G * M * multiplier / r^exponent
-  // Default exponent = 2 gives standard 1/r² gravity
-  // Exponent = 1 gives 1/r (stronger at distance)
-  // Exponent = 3 gives 1/r³ (weaker at distance, stronger close)
   float forceMagnitude = blackholeMass * gravityMultiplier / pow(distance, forceExponent);
 
   // Apply configurable force cap
-  float originalForce = forceMagnitude;
   forceMagnitude = std::min(forceMagnitude, maxForce);
-
-  // Debug output (only occasionally)
-  //static int printCounter = 0;
-  //if (++printCounter % 500 == 0) {
-  //  std::cout << "Gravity: Dist=" << distance
-  //    << ", Force=" << originalForce
-  //    << " (capped: " << forceMagnitude << ")"
-  //    << ", Mult=" << gravityMultiplier
-  //    << ", Exp=" << forceExponent << std::endl;
-  //}
 
   // Return force vector
   return glm::normalize(toBlackhole) * forceMagnitude;
@@ -105,6 +98,12 @@ void LightRay::PropagateRay(float deltaTime, glm::vec2 blackholePos, float black
   // Only the ray HEAD is affected by gravity
   // Existing segments (photons that already passed) remain fixed in space
 
+  // If absorbed, update absorption timer but don't move the ray
+  if (absorbed) {
+    timeSinceAbsorption += deltaTime;
+    return;
+  }
+
   // Calculate gravitational force on the ray head only
   glm::vec2 force = CalculateGravitationalForce(headPosition, blackholePos, blackholeMass);
 
@@ -113,20 +112,20 @@ void LightRay::PropagateRay(float deltaTime, glm::vec2 blackholePos, float black
 
   // Maintain constant speed (speed of light is constant)
   float currentSpeed = glm::length(headVelocity);
-  float targetSpeed = baseSpeed;
 
   // Normalize to maintain constant speed
   if (currentSpeed > 0.001f) {
-    headVelocity = glm::normalize(headVelocity) * targetSpeed;
+    headVelocity = glm::normalize(headVelocity) * baseSpeed;
   }
 
-  // Update head position only
+  // Update head position
   headPosition += headVelocity * deltaTime;
 
   // Check if ray head hit the event horizon
   float distToBlackhole = glm::length(headPosition - blackholePos);
   if (distToBlackhole < eventHorizon) {
     absorbed = true;
+    timeSinceAbsorption = 0.0f;
     // Freeze the head at the event horizon edge
     glm::vec2 toCenter = blackholePos - headPosition;
     headPosition = blackholePos - glm::normalize(toCenter) * eventHorizon;
@@ -135,9 +134,12 @@ void LightRay::PropagateRay(float deltaTime, glm::vec2 blackholePos, float black
   }
 }
 
-
-
 void LightRay::UpdateSegments(float deltaTime) {
+  // Don't update segments if absorbed (ray is frozen at event horizon)
+  if (absorbed) {
+    return;
+  }
+
   // Add new head position to the front of segments
   if (!segments.empty()) {
     // Only add if moved enough distance from last segment
@@ -150,65 +152,60 @@ void LightRay::UpdateSegments(float deltaTime) {
     segments.push_back(headPosition);
   }
 
-  // IMPORTANT: Do NOT modify existing segments!
-  // Once a photon has passed through a point in space, that part of the ray
-  // should remain fixed. We only add new segments at the head.
-
   // Trim the tail if ray is too long (for memory management)
   if (segments.size() > maxSegments) {
     segments.resize(maxSegments);
   }
-
-  // That's it! We don't move existing segments because light that has
-  // already traveled through space doesn't change position.
 }
 
-
-
 void LightRay::Update(float deltaTime, glm::vec2 blackholePos, float blackholeMass, float eventHorizon) {
-  // Continue updating even if absorbed - rays freeze at event horizon
-  // if (absorbed) return;  // REMOVED - keep updating
-
-  // Update the ray head position based on physics
+  // Continue updating even if absorbed
   PropagateRay(deltaTime, blackholePos, blackholeMass, eventHorizon);
-
-  // Update the ray segments to follow the head
   UpdateSegments(deltaTime);
 
-  // Check if ray needs reset (went off screen)
+  // Check if ray needs reset
   if (NeedsReset()) {
+    Reset();
+  }
+  // Check if absorbed ray should respawn
+  else if (ShouldRespawn()) {
     Reset();
   }
 }
 
+bool LightRay::ShouldRespawn() const {
+  // Respawn if absorbed for too long
+  return absorbed && timeSinceAbsorption > ABSORPTION_RESPAWN_TIME;
+}
 
+// NeedsReset for radial pattern
 bool LightRay::NeedsReset() const {
   if (segments.empty()) return true;
 
-  // Check if the ray head has gone off screen
-  if (headPosition.x > 1.5f || headPosition.x < -1.5f ||
-    headPosition.y > 1.5f || headPosition.y < -1.5f) {
+  // Don't reset absorbed rays based on position (they'll reset via ShouldRespawn)
+  if (absorbed) {
+    return false;
+  }
 
-    // Only reset if moving away from screen (not orbiting back)
-    if (headPosition.x > 1.2f && headVelocity.x > 0) {
-      return true;
-    }
+  // Check if ray has traveled too far from center
+  float distFromCenter = glm::length(headPosition);
 
-    // Check if entire ray has left the visible area
-    bool anyVisible = false;
-    for (size_t i = 0; i < std::min(size_t(20), segments.size()); ++i) {
-      const auto& segment = segments[i];
-      if (segment.x >= -1.2f && segment.x <= 1.2f &&
-        segment.y >= -1.2f && segment.y <= 1.2f) {
-        anyVisible = true;
-        break;
-      }
-    }
+  // Reset if ray has gone far off screen (>2.5 units from center)
+  if (distFromCenter > 2.5f) {
+    return true;
+  }
 
-    if (!anyVisible) {
-      return true;
+  // Check visibility - at least some part should be visible
+  bool anyVisible = false;
+  float maxVisible = 2.0f;  // Extended visibility range for radial pattern
+
+  for (size_t i = 0; i < std::min(size_t(20), segments.size()); ++i) {
+    const auto& segment = segments[i];
+    if (std::abs(segment.x) <= maxVisible && std::abs(segment.y) <= maxVisible) {
+      anyVisible = true;
+      break;
     }
   }
 
-  return false;
+  return !anyVisible;
 }
