@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include "LightRay.h"
+#include "RayFactory.h"
 
 class BlackholeApp {
 public:
@@ -36,6 +37,9 @@ public:
   // Window resize callback
   static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
 
+  // Change spawn pattern at runtime
+  void SetSpawnPattern(RayFactory::SpawnPattern pattern);
+
 private:
   // Window dimensions
   int windowWidth;
@@ -52,8 +56,10 @@ private:
   float blackholeMass;          // Mass (affects gravity strength)
 
   // Light rays
-  static const int NUM_RAYS = 8000;  // 2000 rays for dense field
   std::vector<std::unique_ptr<LightRay>> rays;
+
+  // Ray factory for creating rays
+  std::unique_ptr<RayFactory> rayFactory;
 
   // Animation
   float time;
@@ -62,6 +68,15 @@ private:
   // Shader sources
   static const char* vertexShaderSource;
   static const char* fragmentShaderSource;
+
+  // Ray spawning parameters
+  static const int MAX_RAYS = 10000;      // Maximum rays on screen
+  static const int RAYS_PER_SPAWN = 500;  // How many rays to spawn each time
+  float timeSinceLastSpawn;               // Time accumulator for spawning
+  float spawnInterval;                    // Time between spawns
+
+  // Current spawn pattern
+  RayFactory::SpawnPattern currentPattern;
 
   // Helper methods
   bool InitWindow();
@@ -72,15 +87,9 @@ private:
   void UpdateRaySpeed(float newSpeed);
   void DrawBlackhole();
   void DrawRays();
+  void SpawnRayBatch();
+
+  // Shader compilation helpers
   unsigned int CompileShader(unsigned int type, const char* source);
   unsigned int CreateShaderProgram(const char* vertSource, const char* fragSource);
-
-  // Ray spawning
-  static const int MAX_RAYS = 10000;      // Maximum rays on screen
-  static const int RAYS_PER_SPAWN = 500;  // How many rays to spawn each time
-  float timeSinceLastSpawn;               // Time accumulator for spawning
-  float spawnInterval;                    // Time between spawns (0.2 seconds)
-
-  void SpawnRayBatch();  // Add this method declaration
-
 };

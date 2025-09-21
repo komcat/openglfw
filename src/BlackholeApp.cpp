@@ -2,7 +2,6 @@
 #include "LightRay.h"
 #include <iostream>
 #include <cmath>
-#include <random>
 
 // Define PI if not already defined
 #ifndef M_PI
@@ -44,11 +43,16 @@ BlackholeApp::BlackholeApp(int width, int height)
   , lineVAO(0)
   , lineVBO(0)
   , blackholePos(0.0f, 0.0f)  // ALWAYS centered at origin
-  , blackholeRadius(0.288f)    // Your preferred radius
-  , blackholeMass(0.22f)       // Your preferred mass
+  , blackholeRadius(0.288f)
+  , blackholeMass(0.22f)
   , time(0.0f)
-  , raySpeed(0.84f) {          // Your preferred speed (0.839999 rounded)
+  , raySpeed(0.84f)
+  , timeSinceLastSpawn(0.0f)
+  , spawnInterval(0.2f)
+  , currentPattern(RayFactory::SpawnPattern::RADIAL) {
+
   g_App = this;  // Set global pointer for callback
+  rayFactory = std::make_unique<RayFactory>();
 }
 
 BlackholeApp::~BlackholeApp() {
@@ -69,6 +73,17 @@ void BlackholeApp::FramebufferSizeCallback(GLFWwindow* window, int width, int he
     glViewport(0, 0, width, height);
     g_App->UpdateProjectionMatrix();
   }
+}
+
+void BlackholeApp::SetSpawnPattern(RayFactory::SpawnPattern pattern) {
+  currentPattern = pattern;
+  rayFactory->SetSpawnStrategy(pattern);
+
+  // Clear existing rays and spawn new batch with new pattern
+  rays.clear();
+  SpawnRayBatch();
+
+  std::cout << "Spawn pattern changed to: " << rayFactory->GetCurrentStrategyName() << std::endl;
 }
 
 // Update projection matrix
@@ -135,7 +150,7 @@ bool BlackholeApp::InitWindow() {
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
   window = glfwCreateWindow(windowWidth, windowHeight,
-    "Black Hole Radial Light Ray Simulation", NULL, NULL);
+    "Black Hole Light Ray Simulation - Factory Pattern", NULL, NULL);
   if (!window) {
     std::cerr << "Failed to create GLFW window" << std::endl;
     glfwTerminate();
@@ -180,50 +195,34 @@ bool BlackholeApp::InitGeometry() {
   return true;
 }
 
-
-// Replace InitRays() method:
 void BlackholeApp::InitRays() {
   rays.clear();
   timeSinceLastSpawn = 0.0f;
 
-  // Start with an initial batch of rays
+  // Start with an initial batch of rays using the factory
   SpawnRayBatch();
 
-  std::cout << "Ray spawning initialized - Max rays: " << MAX_RAYS
+  std::cout << "Ray spawning initialized using " << rayFactory->GetCurrentStrategyName()
+    << " strategy" << std::endl;
+  std::cout << "Max rays: " << MAX_RAYS
     << ", Spawn interval: " << spawnInterval << " seconds" << std::endl;
 }
 
-
-// Add new method to spawn a batch of rays:
 void BlackholeApp::SpawnRayBatch() {
   // Don't spawn if we're at max capacity
   if (rays.size() >= MAX_RAYS) {
     return;
   }
 
-  // Random number generation for variations
-  std::random_device rd;
-  std::mt19937 gen(rd());
-
-  std::uniform_real_distribution<float> posNoise(-0.02f, 0.02f);
-  std::uniform_real_distribution<float> angleNoise(-0.01f, 0.01f);
-  std::uniform_real_distribution<float> speedNoise(0.95f, 1.05f);
-
   // Calculate how many rays we can spawn
   int raysToSpawn = std::min(RAYS_PER_SPAWN, MAX_RAYS - (int)rays.size());
 
-  // Spawn rays distributed along the left edge
-  for (int i = 0; i < raysToSpawn; i++) {
-    float spacing = 4.0f / raysToSpawn;  // Use actual spawn count, not RAYS_PER_SPAWN
-    float y = -2.0f + spacing * i + spacing * 0.5f + posNoise(gen);  // Center in each slot
-    float x = -2.0f;  // Left edge
+  // Use factory to create new rays
+  auto newRays = rayFactory->CreateRays(raysToSpawn, raySpeed, 10);
 
-    rays.push_back(std::make_unique<LightRay>(
-      glm::vec2(x, y),
-      raySpeed * speedNoise(gen),
-      10,  // Minimal segments since we only show heads
-      0.0f + angleNoise(gen)  // Straight right
-    ));
+  // Move new rays into the main container
+  for (auto& ray : newRays) {
+    rays.push_back(std::move(ray));
   }
 }
 
@@ -253,8 +252,6 @@ void BlackholeApp::DrawBlackhole() {
   glUniform4f(glGetUniformLocation(shaderProgram, "u_Color"), 0.0f, 0.0f, 0.0f, 1.0f);
   glDrawArrays(GL_TRIANGLE_FAN, 0, segments + 2);
 
-  // REMOVED: Photon sphere golden/orange ring
-
   // Draw event horizon edge ring (red boundary)
   std::vector<float> ringVertices;
   for (int i = 0; i <= segments; i++) {
@@ -272,9 +269,6 @@ void BlackholeApp::DrawBlackhole() {
   glDrawArrays(GL_LINE_LOOP, 0, segments + 1);
 }
 
-
-
-// Modified DrawRays() for better performance with many rays:
 void BlackholeApp::DrawRays() {
   glUseProgram(shaderProgram);
   glBindVertexArray(lineVAO);
@@ -324,7 +318,34 @@ void BlackholeApp::ProcessInput(GLFWwindow* window) {
     glfwSetWindowShouldClose(window, true);
   }
 
-  // NO ARROW KEY MOVEMENT - Black hole always centered
+  // Change spawn pattern with number keys
+  static bool key1WasPressed = false;
+  static bool key2WasPressed = false;
+  static bool key3WasPressed = false;
+  static bool key4WasPressed = false;
+
+  bool key1Pressed = (glfwGetKey(window, GLFW_KEY_1) == GLFW_PRESS);
+  bool key2Pressed = (glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS);
+  bool key3Pressed = (glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS);
+  bool key4Pressed = (glfwGetKey(window, GLFW_KEY_4) == GLFW_PRESS);
+
+  if (key1Pressed && !key1WasPressed) {
+    SetSpawnPattern(RayFactory::SpawnPattern::LEFT_EDGE);
+  }
+  if (key2Pressed && !key2WasPressed) {
+    SetSpawnPattern(RayFactory::SpawnPattern::FOUR_EDGES);
+  }
+  if (key3Pressed && !key3WasPressed) {
+    SetSpawnPattern(RayFactory::SpawnPattern::RADIAL);
+  }
+  if (key4Pressed && !key4WasPressed) {
+    SetSpawnPattern(RayFactory::SpawnPattern::SPIRAL);
+  }
+
+  key1WasPressed = key1Pressed;
+  key2WasPressed = key2Pressed;
+  key3WasPressed = key3Pressed;
+  key4WasPressed = key4Pressed;
 
   // Adjust mass with Q/E keys
   if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
@@ -335,7 +356,6 @@ void BlackholeApp::ProcessInput(GLFWwindow* window) {
     blackholeMass = std::min(5.0f, blackholeMass + 0.01f);
     std::cout << "Black hole mass increased to: " << blackholeMass << std::endl;
   }
-
 
   // Gravity multiplier with D/F keys
   if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
@@ -372,6 +392,7 @@ void BlackholeApp::ProcessInput(GLFWwindow* window) {
     spawnInterval = std::min(2.0f, spawnInterval + 0.01f);
     std::cout << "Spawn interval increased to: " << spawnInterval << " seconds" << std::endl;
   }
+
   // Force exponent with G/H keys
   if (glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS) {
     float currentExp = LightRay::GetForceExponent();
@@ -420,24 +441,22 @@ void BlackholeApp::ProcessInput(GLFWwindow* window) {
   bool pKeyIsPressed = (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS);
 
   if (pKeyIsPressed && !pKeyWasPressed) {
-    // Key just pressed - print parameters
     std::cout << "\n=== Current Parameters ===" << std::endl;
+    std::cout << "Spawn Pattern: " << rayFactory->GetCurrentStrategyName() << std::endl;
     std::cout << "Black hole mass: " << blackholeMass << std::endl;
     std::cout << "Black hole radius: " << blackholeRadius << std::endl;
     std::cout << "Light speed: " << raySpeed << std::endl;
     std::cout << "Gravity multiplier: " << LightRay::GetGravityMultiplier() << std::endl;
     std::cout << "Max force cap: " << LightRay::GetMaxForce() << std::endl;
     std::cout << "Force exponent: " << LightRay::GetForceExponent() << std::endl;
-    std::cout << "Number of rays: " << NUM_RAYS << std::endl;
-    std::cout << "Respawn time: " << "0.1 seconds" << std::endl;
+    std::cout << "Max rays: " << MAX_RAYS << std::endl;
+    std::cout << "Spawn interval: " << spawnInterval << " seconds" << std::endl;
     std::cout << "=========================" << std::endl;
   }
 
   pKeyWasPressed = pKeyIsPressed;
 }
 
-
-// Modified Update() method:
 void BlackholeApp::Update(float deltaTime) {
   time += deltaTime;
   timeSinceLastSpawn += deltaTime;
@@ -455,13 +474,11 @@ void BlackholeApp::Update(float deltaTime) {
     // Update the ray
     ray->Update(deltaTime, blackholePos, blackholeMass, blackholeRadius);
 
-    // Instead of resetting rays, remove them when they go off screen
-    // This allows continuous spawning without recycling
+    // Remove rays that go off screen or have been absorbed too long
     if (ray->NeedsReset() && !ray->IsAbsorbed()) {
       it = rays.erase(it);
     }
     else if (ray->ShouldRespawn()) {
-      // Also remove absorbed rays after their timer expires
       it = rays.erase(it);
     }
     else {
@@ -473,7 +490,8 @@ void BlackholeApp::Update(float deltaTime) {
   static float printTimer = 0.0f;
   printTimer += deltaTime;
   if (printTimer > 5.0f) {  // Print every 5 seconds
-    std::cout << "Active rays: " << rays.size() << "/" << MAX_RAYS << std::endl;
+    std::cout << "Active rays: " << rays.size() << "/" << MAX_RAYS
+      << " (" << rayFactory->GetCurrentStrategyName() << " pattern)" << std::endl;
     printTimer = 0.0f;
   }
 }

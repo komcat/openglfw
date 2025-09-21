@@ -31,7 +31,7 @@ set(GLM_INCLUDE_DIR "${GLM_DIR}")
 find_package(OpenGL REQUIRED)
 
 # Create GLAD library
-add_library(glad STATIC ${GLAD_SOURCE})
+add_library(glad STATIC ${GLAD_SOURCE} )
 target_include_directories(glad PUBLIC ${GLAD_INCLUDE_DIR})
 
 # Create a variable for common include directories
@@ -58,10 +58,12 @@ set(COMMON_LIBS
 add_executable(openglfw 
 "src/main.cpp" 
 "src/BlackholeApp.h"
-
-
-
- "src/BlackholeApp.cpp" "src/LightRay.h" "src/LightRay.cpp")
+ "src/BlackholeApp.cpp" 
+ "src/LightRay.h"
+ "src/LightRay.cpp"
+  "src/RayFactory.h"
+ "src/RayFactory.cpp"
+)
 target_include_directories(openglfw PRIVATE ${COMMON_INCLUDES})
 target_link_libraries(openglfw ${COMMON_LIBS})
 
