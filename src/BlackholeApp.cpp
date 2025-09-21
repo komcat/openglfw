@@ -280,23 +280,7 @@ void BlackholeApp::DrawBlackhole() {
   glUniform4f(glGetUniformLocation(shaderProgram, "u_Color"), 0.0f, 0.0f, 0.0f, 1.0f);
   glDrawArrays(GL_TRIANGLE_FAN, 0, segments + 2);
 
-  // REMOVED: Photon sphere golden/orange ring
-
-  // Draw event horizon edge ring (red boundary)
-  std::vector<float> ringVertices;
-  for (int i = 0; i <= segments; i++) {
-    float angle = 2.0f * M_PI * i / segments;
-    float x = blackholePos.x + blackholeRadius * cosf(angle);
-    float y = blackholePos.y + blackholeRadius * sinf(angle);
-    ringVertices.push_back(x);
-    ringVertices.push_back(y);
-  }
-
-  glUniform4f(glGetUniformLocation(shaderProgram, "u_Color"), 0.8f, 0.2f, 0.2f, 0.9f);
-  glLineWidth(2.0f);
-  glBufferSubData(GL_ARRAY_BUFFER, 0,
-    ringVertices.size() * sizeof(float), ringVertices.data());
-  glDrawArrays(GL_LINE_LOOP, 0, segments + 1);
+  // REMOVED: Event horizon red ring
 }
 
 void BlackholeApp::DrawRays() {
@@ -319,8 +303,8 @@ void BlackholeApp::DrawRays() {
       lineVertices.push_back(segment.y);
     }
 
-    // Light gray with transparency for all visible rays
-    glUniform4f(glGetUniformLocation(shaderProgram, "u_Color"), 0.8f, 0.8f, 0.8f, 0.5f);
+    // Light gray with 2% opacity (0.02 alpha) for all visible rays
+    glUniform4f(glGetUniformLocation(shaderProgram, "u_Color"), 0.8f, 0.8f, 0.8f, 0.1f);
 
     glBufferSubData(GL_ARRAY_BUFFER, 0,
       lineVertices.size() * sizeof(float), lineVertices.data());
