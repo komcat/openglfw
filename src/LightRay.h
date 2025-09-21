@@ -1,3 +1,4 @@
+// Updated LightRay.h with more accurate physics
 #pragma once
 
 #include <glm/glm.hpp>
@@ -33,6 +34,9 @@ public:
   // Check if ray is orbiting
   bool IsOrbiting() const;
 
+  // Get proper time (for time dilation effects)
+  float GetProperTime() const { return properTime; }
+
   // Static setters for global gravity parameters
   static void SetGravityMultiplier(float mult) { gravityMultiplier = mult; }
   static void SetMaxForce(float max) { maxForce = max; }
@@ -57,6 +61,8 @@ private:
   // Physics state for the leading edge of the ray
   glm::vec2 headPosition;      // Current position of ray head
   glm::vec2 headVelocity;      // Current velocity of ray head
+  float angularMomentum;       // Conserved angular momentum (NEW)
+  float properTime;            // Proper time along ray's path (NEW)
 
   // Absorption tracking
   float timeSinceAbsorption;   // Time since ray was absorbed
@@ -64,6 +70,9 @@ private:
 
   // Helper methods
   glm::vec2 CalculateGravitationalForce(glm::vec2 position, glm::vec2 blackholePos, float blackholeMass);
+  glm::vec2 CalculateGeodesicDeflection(glm::vec2 position, glm::vec2 velocity,
+    glm::vec2 blackholePos, float blackholeMass);  // NEW
+  float CalculateTimeDilation(float r, float blackholeMass);  // NEW
   void UpdateSegments(float deltaTime);
   void PropagateRay(float deltaTime, glm::vec2 blackholePos, float blackholeMass, float eventHorizon);
 

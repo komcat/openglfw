@@ -1,3 +1,4 @@
+﻿// Updated LightRay.cpp with more accurate physics
 #include "LightRay.h"
 #include <algorithm>
 #include <cmath>
@@ -9,7 +10,7 @@ float LightRay::gravityMultiplier = 1.0f;
 float LightRay::maxForce = 15.0f;
 float LightRay::forceExponent = 2.0f;
 float LightRay::minDistance = 0.001f;
-const float LightRay::ABSORPTION_RESPAWN_TIME = 0.1f; // Respawn after 0.1 seconds
+const float LightRay::ABSORPTION_RESPAWN_TIME = 0.1f;
 
 // Constructor for radial rays
 LightRay::LightRay(glm::vec2 startPos, float speed, int segmentCount, float angle)
@@ -18,7 +19,9 @@ LightRay::LightRay(glm::vec2 startPos, float speed, int segmentCount, float angl
   , initialAngle(angle)
   , absorbed(false)
   , maxSegments(segmentCount * 10)
-  , timeSinceAbsorption(0.0f) {
+  , timeSinceAbsorption(0.0f)
+  , properTime(0.0f)  // Add this new member
+  , angularMomentum(0.0f) {  // Add this new member
   Reset();
 }
 
@@ -26,6 +29,7 @@ LightRay::LightRay(glm::vec2 startPos, float speed, int segmentCount, float angl
 void LightRay::Reset() {
   absorbed = false;
   timeSinceAbsorption = 0.0f;
+  properTime = 0.0f;
   segments.clear();
 
   // Add some randomization for variety
@@ -43,6 +47,10 @@ void LightRay::Reset() {
   float vy = baseSpeed * sin(finalAngle);
   headVelocity = glm::vec2(vx, vy);
 
+  // Calculate angular momentum (conserved quantity in GR)
+  // L = r × v (for 2D, this gives us the z-component)
+  angularMomentum = headPosition.x * headVelocity.y - headPosition.y * headVelocity.x;
+
   // Create initial trail extending backwards from start position
   float segmentLength = 0.02f;
 
@@ -53,96 +61,117 @@ void LightRay::Reset() {
   }
 }
 
-bool LightRay::IsOrbiting() const {
-  // Check if ray is in a roughly circular path
-  if (segments.size() < 10) return false;
+// New method: Calculate deflection based on simplified GR equations
+glm::vec2 LightRay::CalculateGeodesicDeflection(glm::vec2 position, glm::vec2 velocity,
+  glm::vec2 blackholePos, float blackholeMass) {
+  // Vector from position to black hole
+  glm::vec2 toBlackhole = blackholePos - position;
+  float r = glm::length(toBlackhole);
 
-  // Check if recent positions form a curve around origin (0,0)
-  glm::vec2 center = glm::vec2(0.0f, 0.0f); // Black hole at origin
-  float avgRadius = 0;
-  for (size_t i = 0; i < std::min(size_t(10), segments.size()); ++i) {
-    avgRadius += glm::length(segments[i] - center);
+  // Prevent singularity
+  if (r < minDistance) r = minDistance;
+
+  // Schwarzschild radius (in our units)
+  float rs = 2.0f * blackholeMass;  // Simplified: rs = 2GM/c² where G=c=1 in our units
+
+  // Too close to black hole - about to be absorbed
+  if (r < rs * 0.5f) {
+    // Strong field regime - use approximation
+    return glm::normalize(toBlackhole) * maxForce;
   }
-  avgRadius /= std::min(size_t(10), segments.size());
 
-  // Check variance in radius (low variance = circular orbit)
-  float variance = 0;
-  for (size_t i = 0; i < std::min(size_t(10), segments.size()); ++i) {
-    float r = glm::length(segments[i] - center);
-    variance += (r - avgRadius) * (r - avgRadius);
+  // Calculate perpendicular and radial components
+  glm::vec2 rHat = toBlackhole / r;  // Unit vector toward black hole
+
+  // Perpendicular unit vector (rotated 90 degrees)
+  glm::vec2 phiHat(-rHat.y, rHat.x);
+
+  // For a Schwarzschild metric, the acceleration components are:
+  // a_r = -(rs/2r²)(1 - rs/r) for radial
+  // a_φ = -(rs/r³)L where L is angular momentum
+
+  float radialAccel = -(rs / (2.0f * r * r)) * (1.0f - rs / r);
+  float tangentialAccel = -(rs / (r * r * r)) * std::abs(angularMomentum) * 0.1f; // Scaled for visibility
+
+  // Combine components
+  glm::vec2 acceleration = radialAccel * rHat + tangentialAccel * phiHat;
+
+  // Apply multipliers for tuning
+  acceleration *= gravityMultiplier;
+
+  // Cap the maximum acceleration
+  float accelMagnitude = glm::length(acceleration);
+  if (accelMagnitude > maxForce) {
+    acceleration = (acceleration / accelMagnitude) * maxForce;
   }
-  variance /= std::min(size_t(10), segments.size());
 
-  return variance < 0.01f && avgRadius < 0.5f;  // Small variance and close to black hole
+  return acceleration;
 }
 
-glm::vec2 LightRay::CalculateGravitationalForce(glm::vec2 position, glm::vec2 blackholePos, float blackholeMass) {
-  // Calculate vector from position to black hole
-  glm::vec2 toBlackhole = blackholePos - position;
-  float distance = glm::length(toBlackhole);
+// New method: Calculate time dilation factor
+float LightRay::CalculateTimeDilation(float r, float blackholeMass) {
+  float rs = 2.0f * blackholeMass;  // Schwarzschild radius
 
-  // Prevent division by zero with configurable minimum
-  if (distance < minDistance) distance = minDistance;
+  // Prevent division by zero or negative values
+  if (r <= rs) return 0.01f;  // Nearly frozen at event horizon
 
-  // Gravitational force with configurable falloff exponent
-  float forceMagnitude = blackholeMass * gravityMultiplier / pow(distance, forceExponent);
+  // Time dilation factor: dt/dτ = 1/√(1 - rs/r)
+  float factor = 1.0f / sqrt(1.0f - rs / r);
 
-  // Add orbital boost zone - helps create stable orbits
-  // Sweet spot at around 2-3x the event horizon radius
-  float optimalOrbitRadius = 0.6f;  // Tune this for orbital distance
-  if (distance > optimalOrbitRadius * 0.7f && distance < optimalOrbitRadius * 1.3f) {
-    forceMagnitude *= 1.2f;  // Boost force in orbital zone to help capture rays
-  }
-
-  // Apply configurable force cap
-  forceMagnitude = std::min(forceMagnitude, maxForce);
-
-  // Return force vector
-  return glm::normalize(toBlackhole) * forceMagnitude;
+  // Clamp to reasonable values
+  return std::min(factor, 10.0f);
 }
 
 void LightRay::PropagateRay(float deltaTime, glm::vec2 blackholePos, float blackholeMass, float eventHorizon) {
-  // Only the ray HEAD is affected by gravity
-  // Existing segments (photons that already passed) remain fixed in space
-
   // If absorbed, update absorption timer but don't move the ray
   if (absorbed) {
     timeSinceAbsorption += deltaTime;
     return;
   }
 
-  // Calculate gravitational force on the ray head only
-  glm::vec2 force = CalculateGravitationalForce(headPosition, blackholePos, blackholeMass);
+  // Calculate distance to black hole
+  float r = glm::length(headPosition - blackholePos);
 
-  // Update velocity of the head (F = ma, assume m = 1)
-  headVelocity += force * deltaTime;
+  // Calculate time dilation
+  float timeDilationFactor = CalculateTimeDilation(r, blackholeMass);
 
-  // Maintain constant speed (speed of light is constant)
-  float currentSpeed = glm::length(headVelocity);
+  // Effective time step (proper time)
+  float effectiveDeltaTime = deltaTime / timeDilationFactor;
+  properTime += effectiveDeltaTime;
 
-  // Normalize to maintain constant speed
+  // PHYSICS UPDATE 1: Use geodesic equations instead of simple force
+  glm::vec2 acceleration = CalculateGeodesicDeflection(headPosition, headVelocity,
+    blackholePos, blackholeMass);
+
+  // Update velocity (only direction changes, not speed!)
+  glm::vec2 newVelocity = headVelocity + acceleration * effectiveDeltaTime;
+
+  // PHYSICS UPDATE 2: Maintain constant light speed
+  float currentSpeed = glm::length(newVelocity);
   if (currentSpeed > 0.001f) {
-    headVelocity = glm::normalize(headVelocity) * baseSpeed;
+    headVelocity = glm::normalize(newVelocity) * baseSpeed;  // Always travels at baseSpeed
   }
 
-  // Update head position
-  headPosition += headVelocity * deltaTime;
+  // PHYSICS UPDATE 3: Position update includes time dilation
+  // Near the black hole, coordinate time passes slower
+  headPosition += headVelocity * effectiveDeltaTime;
 
-  // Check if ray head hit the event horizon
-  float distToBlackhole = glm::length(headPosition - blackholePos);
-  if (distToBlackhole < eventHorizon) {
+  // Update angular momentum (should be conserved, but recalculate for numerical stability)
+  angularMomentum = headPosition.x * headVelocity.y - headPosition.y * headVelocity.x;
+
+  // Check if ray hit the event horizon
+  if (r < eventHorizon) {
     absorbed = true;
     timeSinceAbsorption = 0.0f;
-    // Freeze the head at the event horizon edge
+    // Freeze at event horizon
     glm::vec2 toCenter = blackholePos - headPosition;
     headPosition = blackholePos - glm::normalize(toCenter) * eventHorizon;
-    // Slow down dramatically (time dilation effect)
-    headVelocity *= 0.1f;
+    // Note: In real physics, we'd never see it reach the horizon due to infinite time dilation
   }
 }
 
 void LightRay::UpdateSegments(float deltaTime) {
-  // Don't update segments if absorbed (ray is frozen at event horizon)
+  // Don't update segments if absorbed (frozen at event horizon)
   if (absorbed) {
     return;
   }
@@ -180,12 +209,34 @@ void LightRay::Update(float deltaTime, glm::vec2 blackholePos, float blackholeMa
   }
 }
 
+bool LightRay::IsOrbiting() const {
+  // Check if ray is in a roughly circular path
+  if (segments.size() < 10) return false;
+
+  // Check if recent positions form a curve around origin (0,0)
+  glm::vec2 center = glm::vec2(0.0f, 0.0f); // Black hole at origin
+  float avgRadius = 0;
+  for (size_t i = 0; i < std::min(size_t(10), segments.size()); ++i) {
+    avgRadius += glm::length(segments[i] - center);
+  }
+  avgRadius /= std::min(size_t(10), segments.size());
+
+  // Check variance in radius (low variance = circular orbit)
+  float variance = 0;
+  for (size_t i = 0; i < std::min(size_t(10), segments.size()); ++i) {
+    float r = glm::length(segments[i] - center);
+    variance += (r - avgRadius) * (r - avgRadius);
+  }
+  variance /= std::min(size_t(10), segments.size());
+
+  return variance < 0.01f && avgRadius < 0.5f;  // Small variance and close to black hole
+}
+
 bool LightRay::ShouldRespawn() const {
   // Respawn if absorbed for too long
   return absorbed && timeSinceAbsorption > ABSORPTION_RESPAWN_TIME;
 }
 
-// NeedsReset for radial pattern
 bool LightRay::NeedsReset() const {
   if (segments.empty()) return true;
 
